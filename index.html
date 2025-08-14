@@ -157,12 +157,34 @@
         <i class="fas fa-cogs me-1"></i> Generate Toolpaths
       </button>
 
-      <button id="exportGcode" class="btn btn-primary btn-sm">
-        <i class="fas fa-file-code me-1"></i> Export GRBL G-code
-      </button>
+      <div class="mb-3">
+        <label class="form-label small fw-semibold">Layer Visualization</label>
+        <div class="form-check">
+          <input class="form-check-input" type="checkbox" value="outline" id="showOutline" checked>
+          <label class="form-check-label" for="showOutline">Outline (red)</label>
+        </div>
+        <div class="form-check">
+          <input class="form-check-input" type="checkbox" value="vectors" id="showVectors" checked>
+          <label class="form-check-label" for="showVectors">Vectors (blue)</label>
+        </div>
+
+        <div class="form-check">
+          <input class="form-check-input" type="checkbox" value="vectors" id="showMask" checked>
+          <label class="form-check-label" for="showVectors">ShadowMask (yellow)</label>
+        </div>
+
+        <div class="form-check">
+          <input class="form-check-input" type="checkbox" value="toolpath" id="showToolpath" checked>
+          <label class="form-check-label" for="showToolpath">Toolpath (green)</label>
+        </div>
+      </div>
 
       <button id="viewTop" class="btn btn-secondary btn-sm">
         <i class="fas fa-eye me-1"></i> View From Top
+      </button>
+
+      <button id="exportGcode" class="btn btn-primary btn-sm">
+        <i class="fas fa-file-code me-1"></i> Export GRBL G-code
       </button>
 
       <div class="mb-4 flex-grow-1 d-flex flex-column">
@@ -437,6 +459,10 @@ const waterlineWorker = new Worker('worker.waterline.js');
 // New Raster worker file (unchanged if you have it)
 const rasterWorker = new Worker('worker.raster.js');
 
+
+
+var lastMsg = {}
+
 function handleWorkerMessage(ev, workerName) {
   const msg = ev.data;
 
@@ -444,36 +470,108 @@ function handleWorkerMessage(ev, workerName) {
     if (!progressModal._isShown) showProgressModal(workerName);
     updateProgress(msg.phase, msg.percent, workerName);
   }
-  else if (msg.cmd === 'rasterResult' || msg.cmd === 'waterlineResult' || msg.cmd === 'roughResult') {
-    hideProgressModal();
-
-    pathGroup.clear();
-    const paths = msg.paths || [];
-    lastPaths = [];
-    for (const p of paths) {
-      const pts = [];
-      for (let i=0; i<p.length; i+=3) pts.push(new THREE.Vector3(p[i], p[i+1], p[i+2]));
-      lastPaths.push(pts);
-      const geom = new THREE.BufferGeometry().setFromPoints(pts);
-      const line = new THREE.Line(
-        geom,
-        new THREE.LineBasicMaterial({
-          color: 0x00ff99,
-          transparent: true,
-          opacity: 0.5, // 50% transparency
-        })
-      );
-      pathGroup.add(line);
-    }
-
-    showCompletion(`Generated ${lastPaths.length} path segments`);
+  else if (msg.cmd === 'waterlineResult' || msg.cmd === 'roughResult' || msg.cmd === 'rasterResult') {
+    drawLayers(msg)
+    lastMsg = msg;
   }
+
+
+
   else if (msg.cmd === 'error') {
     hideProgressModal();
     showError(`Worker ${workerName} error: ${msg.message}`);
   }
 }
 
+
+function drawLayers(msg) {
+  pathGroup.clear();
+  const layers = msg.layers || [];
+  const showOutline = document.getElementById('showOutline').checked;
+  const showVectors = document.getElementById('showVectors').checked;
+  const showToolpath = document.getElementById('showToolpath').checked;
+  const showMask = document.getElementById('showMask').checked;
+
+
+  console.log(layers);
+  lastPaths = [];
+
+  for (const layer of layers) {
+    const z = layer.Z;
+    const SCALE = 10000;
+
+    // --- Outline ---
+    if (showOutline && layer.Outline.length) {
+      const outline = layer.Outline[0];
+      const pts = outline.map(pt => new THREE.Vector3(pt.X / SCALE, pt.Y / SCALE, z));
+      lastPaths.push(pts);
+
+      const geom = new THREE.BufferGeometry().setFromPoints(pts);
+      const line = new THREE.Line(
+        geom,
+        new THREE.LineBasicMaterial({ color: 0xff0000, transparent: true, opacity: 0.8 })
+      );
+      pathGroup.add(line);
+    }
+
+    // --- Vectors ---
+    if (showVectors) {
+      for (const vector of layer.Vectors) {
+        const pts = vector.map(pt => new THREE.Vector3(pt.X / SCALE, pt.Y / SCALE, z));
+        lastPaths.push(pts);
+
+        const geom = new THREE.BufferGeometry().setFromPoints(pts);
+        const line = new THREE.Line(
+          geom,
+          new THREE.LineBasicMaterial({ color: 0x0000ff, transparent: true, opacity: 0.5 })
+        );
+        pathGroup.add(line);
+      }
+    }
+
+    // --- Shadow masks ---
+    if (showMask) {
+      for (const mask of layer.ShowMask) {
+        const pts = mask.map(pt => new THREE.Vector3(pt.X / SCALE, pt.Y / SCALE, z));
+        lastPaths.push(pts);
+
+        const geom = new THREE.BufferGeometry().setFromPoints(pts);
+        const line = new THREE.Line(
+          geom,
+          new THREE.LineBasicMaterial({ color: 0xffff00, transparent: true, opacity: 0.3 })
+        );
+        pathGroup.add(line);
+      }
+    }
+
+    // --- Toolpaths ---
+    if (showToolpath) {
+      for (const path of layer.Toolpath) {
+        const pts = [];
+        for (let i = 0; i < path.length; i += 3) {
+          pts.push(new THREE.Vector3(path[i], path[i + 1], path[i + 2]));
+        }
+        lastPaths.push(pts);
+
+        const geom = new THREE.BufferGeometry().setFromPoints(pts);
+        const line = new THREE.Line(
+          geom,
+          new THREE.LineBasicMaterial({ color: 0x00ff00, transparent: true, opacity: 0.5 })
+        );
+        pathGroup.add(line);
+      }
+    }
+  }
+
+  showCompletion(`Generated ${lastPaths.length} path segments`);
+  setTimeout(() => hideProgressModal(), 1000);
+}
+
+['showOutline', 'showVectors', 'showToolpath', 'showMask'].forEach(id => {
+  document.getElementById(id).addEventListener('change', () => {
+    if (lastMsg && lastMsg.layers) drawLayers(lastMsg);
+  });
+});
 
 
 waterlineWorker.onmessage = (ev) => handleWorkerMessage(ev, 'Waterline');
@@ -625,27 +723,19 @@ function showProgressModal(workerName) {
 function updateProgress(phase, percent, workerName) {
 
   const phaseDescriptions = {
-    'preSlice': 'Generating layers',
-    'shadowMask': 'Identifying overhangs',
-    'offsetPaths': 'Preparing Toolpaths'
+    1: 'Generating layers',
+    2: 'Generating Overhangs',
+    3: 'Preparing Toolpaths'
   };
-
-
-  // phase format: "1/3: preSlice"
-  const match = phase.match(/^(\d+)\/(\d+):\s*(.*)$/);
-  if (!match) return;
-
-  const stageNum = parseInt(match[1], 10);
-  const stageTotal = parseInt(match[2], 10);
-  const stageName = match[3];
+  const stageTotal = 3;
 
   // Map stage percent to overall percent
-  const start = (stageNum - 1) / stageTotal * 100;
-  const end = stageNum / stageTotal * 100;
+  const start = (phase - 1) / stageTotal * 100;
+  const end = phase / stageTotal * 100;
   const overallPercent = start + (percent / 100) * (end - start);
 
   // Friendly description
-  const friendlyName = phaseDescriptions[stageName] || stageName;
+  const friendlyName = phaseDescriptions[phase] || phase;
 
   progressBar.style.width = `${overallPercent}%`;
   progressBar.textContent = ``;
@@ -669,7 +759,6 @@ function showCompletion(message) {
   completionText.textContent = message;
   completionToast.show();
 }
-
 
 </script>
 
