@@ -1,0 +1,680 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>CNC CAM</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+
+  <!-- Bootstrap 5 CSS -->
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet" />
+
+  <!-- Font Awesome Free -->
+  <link
+    rel="stylesheet"
+    href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/7.0.0/css/all.min.css"
+  />
+
+  <style>
+    html, body {
+      height: 100%;
+      margin: 0;
+      font-family: system-ui, "Segoe UI", Roboto, Arial, sans-serif;
+      background: #fff;
+      color: #212529;
+    }
+    #app {
+      display: flex;
+      height: 100vh;
+      overflow: hidden;
+    }
+    #ui {
+      width: 360px;
+      max-width: 40%;
+      padding: 1.5rem 1.25rem;
+      background: #f8f9fa; /* Bootstrap light gray background */
+      overflow-y: auto;
+      border-right: 1px solid #dee2e6;
+      /* Force scroll if content overflows */
+      scrollbar-width: thin;
+    }
+    #viewer {
+      flex: 1;
+      position: relative;
+      background: #fff;
+    }
+    /* Make form labels bold and spaced */
+    .form-label {
+      font-weight: 600;
+      margin-bottom: 0.25rem;
+      color: #212529;
+    }
+    .form-text {
+      font-size: 0.8rem;
+      color: #6c757d;
+      margin-top: -0.5rem;
+      margin-bottom: 0.75rem;
+    }
+    /* Customize buttons */
+    button {
+      width: 100%;
+      margin-bottom: 0.75rem;
+    }
+    textarea#GCodePreview,
+    textarea#gcode {
+      background: #e9ecef;
+      color: #212529;
+      font-family: monospace;
+      font-size: 0.85rem;
+      height: 160px;
+      resize: none;
+      border: 1px solid #ced4da;
+      border-radius: 0.25rem;
+    }
+  </style>
+
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://unpkg.com/three@0.161.0/build/three.module.min.js",
+      "three/addons/": "https://unpkg.com/three@0.161.0/examples/jsm/"
+    }
+  }
+  </script>
+</head>
+<body>
+  <div id="app">
+    <div id="ui" class="d-flex flex-column">
+
+      <div class="mb-3">
+        <button id="loadBtn" class="btn btn-dark btn-sm">
+          <i class="fas fa-upload me-1"></i> Load STL File
+        </button>
+        <input id="file" type="file" accept=".stl" class="d-none" />
+      </div>
+
+      <div class="mb-2">
+        <div class="input-group input-group-sm">
+          <span class="input-group-text">Mode</span>
+          <select id="mode" class="form-select">
+            <option value="raster">Raster</option>
+            <option value="waterline" selected>Waterline</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="mb-2">
+        <div class="input-group input-group-sm">
+          <span class="input-group-text">Operation</span>
+          <select id="operation" class="form-select">
+            <option value="roughing">Roughing</option>
+            <option value="finishing" selected>Finishing</option>
+            <option value="profile">Profile</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="mb-2">
+        <div class="input-group input-group-sm">
+          <span class="input-group-text">Endmill Diameter</span>
+          <input id="dia" type="number" value="6" step="0.1" class="form-control form-control-sm" />
+          <span class="input-group-text">mm</span>
+        </div>
+      </div>
+
+      <div class="mb-2">
+        <div class="input-group input-group-sm">
+          <span class="input-group-text">Stepdown</span>
+          <input id="stepdown" type="number" value="1" step="0.1" class="form-control form-control-sm" />
+          <span class="input-group-text">mm</span>
+        </div>
+      </div>
+
+      <div class="mb-2" id="stepoverGroup" style="display:none;">
+        <div class="input-group input-group-sm">
+          <span class="input-group-text">Stepover</span>
+          <input id="stepover" type="number" value="2" step="0.1" class="form-control form-control-sm" />
+          <span class="input-group-text">mm</span>
+        </div>
+      </div>
+
+      <div class="mb-2" id="stockAllowGroup">
+        <div class="input-group input-group-sm">
+          <span class="input-group-text">Allowance</span>
+          <input id="stockAllow" type="number" value="0.2" step="0.01" class="form-control form-control-sm" />
+          <span class="input-group-text">mm</span>
+        </div>
+      </div>
+
+      <fieldset class="mb-4" id="dirGroup">
+        <legend class="form-label small fw-semibold">Raster Direction</legend>
+        <select id="dir" class="form-select form-select-sm">
+          <option value="x">X (lines along Y)</option>
+          <option value="y">Y (lines along X)</option>
+        </select>
+      </fieldset>
+
+      <button id="genPaths" class="btn btn-success btn-sm">
+        <i class="fas fa-cogs me-1"></i> Generate Toolpaths
+      </button>
+
+      <button id="exportGcode" class="btn btn-primary btn-sm">
+        <i class="fas fa-file-code me-1"></i> Export GRBL G-code
+      </button>
+
+      <button id="viewTop" class="btn btn-secondary btn-sm">
+        <i class="fas fa-eye me-1"></i> View From Top
+      </button>
+
+      <div class="mb-4 flex-grow-1 d-flex flex-column">
+        <label for="gcode" class="form-label">G-code Preview</label>
+        <textarea id="gcode" readonly class="form-control flex-grow-1"></textarea>
+      </div>
+    </div>
+
+    <div id="viewer"></div>
+  </div>
+
+<!-- Hidden Modals -->
+  <!-- Progress Modal -->
+  <div class="modal fade" id="progressModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h5 class="modal-title" id="progressTitle">Processing...</h5>
+        </div>
+        <div class="modal-body">
+          <div class="progress">
+            <div id="progressBar" class="progress-bar progress-bar-animated"
+                 role="progressbar" style="width: 0%, height: 40px;">0%</div>
+          </div>
+          <p id="progressText" class="mt-2 mb-0 small"></p>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Error Modal -->
+  <div class="modal fade" id="errorModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered">
+      <div class="modal-content border-danger">
+        <div class="modal-header bg-danger text-white">
+          <h5 class="modal-title">Error</h5>
+        </div>
+        <div class="modal-body" id="errorText"></div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-danger" data-bs-dismiss="modal">Close</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Completion Toast -->
+  <div class="position-fixed bottom-0 end-0 p-3" style="z-index: 1055">
+    <div id="completionToast" class="toast align-items-center text-bg-success border-0" role="alert" aria-live="assertive" aria-atomic="true">
+      <div class="d-flex">
+        <div class="toast-body" id="completionText">Completed!</div>
+        <button type="button" class="btn-close btn-close-white me-2 m-auto" data-bs-dismiss="toast" aria-label="Close"></button>
+      </div>
+    </div>
+  </div>
+
+
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { MOUSE } from 'three';
+import { STLLoader } from 'three/addons/loaders/STLLoader.js';
+
+// Renderer + container setup
+const container = document.getElementById('viewer');
+const renderer = new THREE.WebGLRenderer({antialias:true});
+function resizeRenderer() {
+  const uiWidth = document.getElementById('ui').offsetWidth;
+  renderer.setSize(window.innerWidth - uiWidth, window.innerHeight);
+}
+resizeRenderer();
+renderer.setPixelRatio(window.devicePixelRatio);
+container.appendChild(renderer.domElement);
+
+// Scene + camera setup
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0xffffff); // Changed from dark (#222222) to white
+
+let frustumSize = 400;
+const uiWidth = document.getElementById('ui').offsetWidth;
+const aspect = (window.innerWidth - uiWidth) / window.innerHeight;
+const camera = new THREE.OrthographicCamera(
+  -frustumSize * aspect / 2, frustumSize * aspect / 2,
+  frustumSize / 2, -frustumSize / 2,
+  0.01, 10000
+);
+camera.up.set(0,0,1);
+camera.position.set(200,200,200);
+camera.lookAt(0,0,0);
+
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.enableDamping = true;
+
+// Make mouse mappings friendly for a top-down CAM view
+controls.mouseButtons = {
+  LEFT: MOUSE.PAN,
+  MIDDLE: MOUSE.DOLLY,
+  RIGHT: MOUSE.ROTATE
+};
+controls.screenSpacePanning = true;
+
+const grid = new THREE.GridHelper(400, 40, 0xcccccc, 0xeeeeee);
+grid.rotation.x = Math.PI/2;
+scene.add(grid);
+
+const light = new THREE.DirectionalLight(0xffffff, 1);
+light.position.set(1,2,3);
+scene.add(light);
+scene.add(new THREE.AmbientLight(0x666666));
+
+// Groups
+let meshGroup = new THREE.Group(); scene.add(meshGroup);
+let pathGroup = new THREE.Group(); scene.add(pathGroup);
+
+// UI references
+const fileInput = document.getElementById('file');
+const loadBtn = document.getElementById('loadBtn');
+
+const diaInput = document.getElementById('dia');
+const stepoverInput = document.getElementById('stepover');
+const stepdownInput = document.getElementById('stepdown');
+const dirInput = document.getElementById('dir');
+const modeInput = document.getElementById('mode');
+const genPathsBtn = document.getElementById('genPaths');
+const exportBtn = document.getElementById('exportGcode');
+const gcodeArea = document.getElementById('gcode');
+const viewTopBtn = document.getElementById('viewTop');
+
+const operationSelect = document.getElementById('operation');
+const stepoverGroup = document.getElementById('stepoverGroup');
+const dirGroup = document.getElementById('dirGroup');
+const stockAllowGroup = document.getElementById('stockAllowGroup');
+
+const stockAllowInput = document.getElementById('stockAllow');
+
+let loadedMesh = null;
+let meshBounds = null;
+let lastPaths = [];
+
+loadBtn.addEventListener('click', () => fileInput.click());
+fileInput.addEventListener('change', () => {
+  // Optional: handle file after selection
+  const file = fileInput.files[0];
+  if(file) console.log("File selected:", file.name);
+});
+
+
+// Show/hide controls depending on mode & operation
+const rasterGroups = [ stepoverGroup, dirGroup ];
+const waterlineGroups = [ stepoverGroup ];
+function updateModeUI() {
+  const mode = modeInput.value;
+  if (mode === 'raster') {
+    rasterGroups.forEach(el => el.style.display = 'block');
+    waterlineGroups.forEach(el => el.style.display = 'none');
+  } else {
+    rasterGroups.forEach(el => el.style.display = 'none');
+    waterlineGroups.forEach(el => el.style.display = 'block');
+  }
+}
+updateModeUI();
+modeInput.addEventListener('change', updateModeUI);
+
+function updateOperationUI() {
+  const op = operationSelect.value;
+  if (op === 'roughing') {
+    stepoverGroup.style.display = 'block';
+    stockAllowGroup.style.display = 'block';
+  } else {
+    // Hide for finishing and profile
+    stepoverGroup.style.display = 'none';
+    stockAllowGroup.style.display = 'none';
+  }
+}
+updateOperationUI();
+operationSelect.addEventListener('change', updateOperationUI);
+
+window.addEventListener('resize', () => {
+  const uiWidth = document.getElementById('ui').offsetWidth;
+  const aspect = (window.innerWidth - uiWidth) / window.innerHeight;
+  camera.left = -frustumSize * aspect / 2;
+  camera.right = frustumSize * aspect / 2;
+  camera.top = frustumSize / 2;
+  camera.bottom = -frustumSize / 2;
+  camera.updateProjectionMatrix();
+  resizeRenderer();
+});
+
+function animate() {
+  requestAnimationFrame(animate);
+  controls.update();
+  renderer.render(scene, camera);
+}
+animate();
+
+function setCameraTopView(center, maxSize) {
+  const uiWidth = document.getElementById('ui').offsetWidth;
+  const aspect = (window.innerWidth - uiWidth) / window.innerHeight;
+  const size = Math.max(maxSize, 1) * 1.25;
+  frustumSize = size;
+  camera.left = -frustumSize * aspect / 2;
+  camera.right = frustumSize * aspect / 2;
+  camera.top = frustumSize / 2;
+  camera.bottom = -frustumSize / 2;
+  camera.updateProjectionMatrix();
+
+  camera.position.set(center.x, center.y, center.z + maxSize * 2.5);
+  camera.up.set(0,0,1);
+  camera.lookAt(center);
+  controls.target.copy(center);
+  controls.update();
+}
+
+fileInput.addEventListener('change', (e) => {
+  const f = e.target.files[0];
+  if (!f) return;
+  const reader = new FileReader();
+  reader.onload = (ev) => parseSTL(ev.target.result);
+  reader.readAsArrayBuffer(f);
+});
+
+function parseSTL(buffer) {
+  clearAll();
+  const loader = new STLLoader();
+  const geom = loader.parse(buffer);
+  geom.computeVertexNormals();
+
+  const pos = geom.attributes.position;
+  const faces = pos.count / 3;
+  const colors = new Float32Array(pos.count * 3);
+  const A = new THREE.Vector3(), B = new THREE.Vector3(), C = new THREE.Vector3(), N = new THREE.Vector3();
+
+  for (let i=0; i<faces; i++) {
+    A.fromBufferAttribute(pos, i*3 + 0);
+    B.fromBufferAttribute(pos, i*3 + 1);
+    C.fromBufferAttribute(pos, i*3 + 2);
+    N.copy(new THREE.Vector3().subVectors(C,B).cross(new THREE.Vector3().subVectors(A,B))).normalize();
+
+    const isOverhang = N.z < 0;
+    const col = isOverhang ? new THREE.Color(0xdc3545) : new THREE.Color(0x0d6efd);
+    for (let v=0; v<3; v++) {
+      colors[(i*3+v)*3+0] = col.r;
+      colors[(i*3+v)*3+1] = col.g;
+      colors[(i*3+v)*3+2] = col.b;
+    }
+  }
+
+  geom.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+  const mat = new THREE.MeshStandardMaterial({ vertexColors:true, side: THREE.DoubleSide, metalness: 0.1, roughness:0.7 });
+  const mesh = new THREE.Mesh(geom, mat);
+  meshGroup.add(mesh);
+
+  loadedMesh = mesh;
+  meshBounds = new THREE.Box3().setFromObject(mesh);
+
+  const center = meshBounds.getCenter(new THREE.Vector3());
+  const size = meshBounds.getSize(new THREE.Vector3());
+  setCameraTopView(center, Math.max(size.x, size.y, size.z));
+}
+
+function clearAll() {
+  meshGroup.clear();
+  pathGroup.clear();
+  loadedMesh = null;
+  lastPaths = [];
+  gcodeArea.value = '';
+  meshBounds = null;
+}
+
+// --- Worker setup ---
+// waterline worker handles finishing + roughing + profile
+const waterlineWorker = new Worker('worker.waterline.js');
+// New Raster worker file (unchanged if you have it)
+const rasterWorker = new Worker('worker.raster.js');
+
+function handleWorkerMessage(ev, workerName) {
+  const msg = ev.data;
+
+  if (msg.cmd === 'progress') {
+    if (!progressModal._isShown) showProgressModal(workerName);
+    updateProgress(msg.phase, msg.percent, workerName);
+  }
+  else if (msg.cmd === 'rasterResult' || msg.cmd === 'waterlineResult' || msg.cmd === 'roughResult') {
+    hideProgressModal();
+
+    pathGroup.clear();
+    const paths = msg.paths || [];
+    lastPaths = [];
+    for (const p of paths) {
+      const pts = [];
+      for (let i=0; i<p.length; i+=3) pts.push(new THREE.Vector3(p[i], p[i+1], p[i+2]));
+      lastPaths.push(pts);
+      const geom = new THREE.BufferGeometry().setFromPoints(pts);
+      const line = new THREE.Line(
+        geom,
+        new THREE.LineBasicMaterial({
+          color: 0x00ff99,
+          transparent: true,
+          opacity: 0.5, // 50% transparency
+        })
+      );
+      pathGroup.add(line);
+    }
+
+    showCompletion(`Generated ${lastPaths.length} path segments`);
+  }
+  else if (msg.cmd === 'error') {
+    hideProgressModal();
+    showError(`Worker ${workerName} error: ${msg.message}`);
+  }
+}
+
+
+
+waterlineWorker.onmessage = (ev) => handleWorkerMessage(ev, 'Waterline');
+rasterWorker.onmessage = (ev) => handleWorkerMessage(ev, 'Raster');
+
+// prepare triangles for transfer
+function sendMeshToWorker() {
+  if (!loadedMesh) return null;
+  const geom = loadedMesh.geometry.clone();
+  const nonIndexed = geom.index ? geom.toNonIndexed() : geom;
+  const posAttr = nonIndexed.attributes.position;
+  const arr = new Float32Array(posAttr.array);
+  const triCount = arr.length / 9;
+  const bbox = new THREE.Box3().setFromBufferAttribute(nonIndexed.attributes.position);
+  return { triangles: arr, triCount, bbox };
+}
+
+// Dispatch UI -> worker based on mode
+genPathsBtn.addEventListener('click', () => {
+  if (!loadedMesh) { alert('Load an STL first'); return; }
+  pathGroup.clear();
+  gcodeArea.value = 'Worker running...';
+
+  const mode = modeInput.value;
+  let dia = parseFloat(diaInput.value);
+  const data = sendMeshToWorker();
+  if (!data) return;
+
+  const operation = operationSelect.value; // 'finishing' | 'roughing' | 'profile'
+  const stockAllow = parseFloat(stockAllowInput.value) || 0;
+  const stepdown = parseFloat(stepdownInput.value);
+
+  if (mode === 'raster') {
+    const stepover = parseFloat(stepoverInput.value);
+    const dir = dirInput.value;
+    rasterWorker.postMessage({
+      cmd: 'raster',
+      triangles: data.triangles,
+      triCount: data.triCount,
+      bbox: {
+        minX: data.bbox.min.x, maxX: data.bbox.max.x,
+        minY: data.bbox.min.y, maxY: data.bbox.max.y,
+        minZ: data.bbox.min.z, maxZ: data.bbox.max.z
+      },
+      dir, stepover, dia
+    }, [data.triangles.buffer]);
+  } else {
+    // waterline worker handles finishing, roughing, and profile
+    let stepover = parseFloat(stepoverInput.value);
+    dia = dia + (stockAllow * 2); // Leave stock for finishing pass
+    if (operation === 'roughing') {
+      if (!stepover || isNaN(stepover)) {
+        // default to 60% of diameter (i.e. 40% overlap)
+        stepover = dia * 0.6;
+      }
+
+    } else {
+      // finishing/profile: no stepover is used here
+      stepover = undefined;
+    }
+
+    // NEW: map operation -> worker mode (adds "profile")
+    const workerMode =
+      operation === 'roughing' ? 'rough' :
+      operation === 'profile'  ? 'profile' :
+      'waterline';
+
+    waterlineWorker.postMessage({
+      cmd: 'waterline',
+      mode: workerMode,
+      triangles: data.triangles,
+      triCount: data.triCount,
+      bbox: {
+        minX: data.bbox.min.x, maxX: data.bbox.max.x,
+        minY: data.bbox.min.y, maxY: data.bbox.max.y,
+        minZ: data.bbox.min.z, maxZ: data.bbox.max.z
+      },
+      dia, stepdown, stepover
+    }, [data.triangles.buffer]);
+  }
+});
+
+function exportGcode(paths, {feed=800, plunge=200, safeZ=5} = {}) {
+  if (!paths || paths.length === 0) return '';
+  const lines = [];
+  lines.push('G21 ; mm');
+  lines.push('G90 ; absolute');
+  lines.push('G94 ; feed per minute');
+  lines.push(`G0 Z${safeZ.toFixed(3)}`);
+  for (const seg of paths) {
+    if (!seg || seg.length === 0) continue;
+    const p0 = seg[0];
+    lines.push(`G0 X${p0.x.toFixed(4)} Y${p0.y.toFixed(4)}`);
+    lines.push(`G1 Z0 F${plunge}`);
+    for (let i=1; i<seg.length; i++) {
+      const p = seg[i];
+      lines.push(`G1 X${p.x.toFixed(4)} Y${p.y.toFixed(4)} F${feed}`);
+    }
+    lines.push(`G0 Z${safeZ.toFixed(3)}`);
+  }
+  lines.push('M30');
+  return lines.join('\n');
+}
+
+exportBtn.addEventListener('click', () => {
+  if (!lastPaths || lastPaths.length === 0) { alert('No toolpaths generated'); return; }
+  const g = exportGcode(lastPaths);
+  gcodeArea.value = g;
+  const blob = new Blob([g], {type:'text/plain'});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = 'toolpaths.gcode';
+  a.click();
+  URL.revokeObjectURL(url);
+});
+
+viewTopBtn.addEventListener('click', () => {
+  if (!loadedMesh) return;
+  const box = new THREE.Box3().setFromObject(loadedMesh);
+  const center = box.getCenter(new THREE.Vector3());
+  const size = box.getSize(new THREE.Vector3());
+  setCameraTopView(center, Math.max(size.x, size.y, size.z));
+});
+
+// Bootstrap modal/toast references
+const progressModal = new bootstrap.Modal(document.getElementById('progressModal'), {backdrop:'static', keyboard:false});
+const progressBar = document.getElementById('progressBar');
+const progressText = document.getElementById('progressText');
+const progressTitle = document.getElementById('progressTitle');
+
+const errorModal = new bootstrap.Modal(document.getElementById('errorModal'));
+const errorText = document.getElementById('errorText');
+
+const completionToastEl = document.getElementById('completionToast');
+const completionToast = new bootstrap.Toast(completionToastEl, {delay: 4000});
+const completionText = document.getElementById('completionText');
+
+// Show progress modal
+function showProgressModal(workerName) {
+  progressBar.style.width = '0%';
+  progressBar.textContent = '';
+  progressText.textContent = `${workerName} - Starting...`;
+  progressTitle.textContent = `Processing...`;
+  progressModal.show();
+}
+
+// Update progress
+function updateProgress(phase, percent, workerName) {
+
+  const phaseDescriptions = {
+    'preSlice': 'Generating layers',
+    'shadowMask': 'Identifying overhangs',
+    'offsetPaths': 'Preparing Toolpaths'
+  };
+
+
+  // phase format: "1/3: preSlice"
+  const match = phase.match(/^(\d+)\/(\d+):\s*(.*)$/);
+  if (!match) return;
+
+  const stageNum = parseInt(match[1], 10);
+  const stageTotal = parseInt(match[2], 10);
+  const stageName = match[3];
+
+  // Map stage percent to overall percent
+  const start = (stageNum - 1) / stageTotal * 100;
+  const end = stageNum / stageTotal * 100;
+  const overallPercent = start + (percent / 100) * (end - start);
+
+  // Friendly description
+  const friendlyName = phaseDescriptions[stageName] || stageName;
+
+  progressBar.style.width = `${overallPercent}%`;
+  progressBar.textContent = ``;
+  progressText.textContent = `${friendlyName}...`;
+  progressTitle.textContent = `Processing... ${Math.round(overallPercent)}%`;
+}
+
+// Hide progress modal
+function hideProgressModal() {
+  progressModal.hide();
+}
+
+// Show error modal
+function showError(message) {
+  errorText.textContent = message;
+  errorModal.show();
+}
+
+// Show completion toast
+function showCompletion(message) {
+  completionText.textContent = message;
+  completionToast.show();
+}
+
+
+</script>
+
+<!-- Bootstrap 5 JS bundle -->
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+
+</body>
+</html>
