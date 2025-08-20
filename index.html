@@ -6,7 +6,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
 
   <!-- Bootstrap 5 CSS -->
-  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet" />
+  <link href="https://cdnjs.cloudflare.com/ajax/libs/bootstrap/5.3.7/css/bootstrap.min.css" rel="stylesheet" />
 
   <!-- Font Awesome Free -->
   <link
@@ -109,7 +109,7 @@
           <span class="input-group-text">Strategy</span>
           <select id="strategy" class="form-select">
             <option value="waterline" selected>Waterline</option>
-            <option value="raster">Raster</option>
+            <!-- <option value="raster">Raster</option> -->
           </select>
         </div>
       </div>
@@ -130,11 +130,12 @@
         </div>
       </div>
 
+      <!-- MODIFIED: Stepover is now a percentage -->
       <div class="mb-2" id="stepoverGroup">
         <div class="input-group input-group-sm">
           <span class="input-group-text">Stepover</span>
-          <input id="stepover" type="number" value="2" step="0.1" class="form-control form-control-sm" />
-          <span class="input-group-text">mm</span>
+          <input id="stepover" type="number" value="40" step="1" min="1" max="100" class="form-control form-control-sm" />
+          <span class="input-group-text">%</span>
         </div>
       </div>
 
@@ -162,18 +163,7 @@
 
       <div class="mb-3">
         <label class="form-label small fw-semibold">Layer Visualization</label>
-        <div class="form-check">
-          <input class="form-check-input" type="checkbox" value="outline" id="showOutline" checked>
-          <label class="form-check-label" for="showOutline">Outline (red)</label>
-        </div>
-        <div class="form-check">
-          <input class="form-check-input" type="checkbox" value="vectors" id="showVectors" checked>
-          <label class="form-check-label" for="showVectors">Vectors (blue)</label>
-        </div>
-        <div class="form-check">
-          <input class="form-check-input" type="checkbox" value="vectors" id="showMask" checked>
-          <label class="form-check-label" for="showMask">ShadowMask (yellow)</label>
-        </div>
+
         <div class="form-check">
           <input class="form-check-input" type="checkbox" value="toolpath" id="showToolpath" checked>
           <label class="form-check-label" for="showToolpath">Toolpath (green)</label>
@@ -188,10 +178,6 @@
         <i class="fas fa-file-code me-1"></i> Export GRBL G-code
       </button>
 
-      <div class="mb-4 flex-grow-1 d-flex flex-column">
-        <label for="gcode" class="form-label">G-code Preview</label>
-        <textarea id="gcode" readonly class="form-control flex-grow-1"></textarea>
-      </div>
     </div>
 
     <div id="viewer"></div>
@@ -295,7 +281,6 @@ const stepdownInput = document.getElementById('stepdown');
 const dirInput = document.getElementById('dir');
 const genPathsBtn = document.getElementById('genPaths');
 const exportBtn = document.getElementById('exportGcode');
-const gcodeArea = document.getElementById('gcode');
 const viewTopBtn = document.getElementById('viewTop');
 const stockAllowInput = document.getElementById('stockAllow');
 
@@ -309,6 +294,7 @@ const stockAllowGroup = document.getElementById('stockAllowGroup');
 let loadedMesh = null;
 let meshBounds = null;
 let lastPaths = [];
+let lastMsg = {};
 
 // --- File Loading and Parsing (no changes) ---
 loadBtn.addEventListener('click', () => fileInput.click());
@@ -359,9 +345,20 @@ function loadFile(file) {
                     geometry.computeVertexNormals();
                     mesh.material = createMaterial(geometry);
                 }
+
+                const initialBounds = new THREE.Box3().setFromObject(mesh);
+                const modelCenter = initialBounds.getCenter(new THREE.Vector3());
+                const xOffset = -modelCenter.x;
+                const yOffset = -modelCenter.y;
+                const zOffset = -initialBounds.min.z;
+
+                mesh.geometry.translate(xOffset, yOffset, zOffset);
+                mesh.geometry.computeBoundingBox();
+
                 meshGroup.add(mesh);
                 loadedMesh = mesh;
-                meshBounds = new THREE.Box3().setFromObject(mesh);
+                meshBounds = mesh.geometry.boundingBox.clone();
+
                 const center = meshBounds.getCenter(new THREE.Vector3());
                 const size = meshBounds.getSize(new THREE.Vector3());
                 setCameraTopView(center, Math.max(size.x, size.y, size.z));
@@ -447,35 +444,34 @@ function setCameraTopView(center, maxSize) {
 }
 function clearAll() {
   meshGroup.clear(); pathGroup.clear(); loadedMesh = null;
-  lastPaths = []; gcodeArea.value = ''; meshBounds = null;
+  lastPaths = []; meshBounds = null;
 }
 
-// --- Worker Setup and Communication (UPDATED) ---
+// --- Worker Setup and Communication ---
 const waterlineWorker = new Worker('worker.waterline.js');
-const rasterWorker = new Worker('worker.raster.js');
-const gcodeWorker = new Worker('worker.gcode.js');
-var lastMsg = {};
 
-// Generic handler for all workers
+const gcodeWorker = new Worker('worker.gcode.js');
+const heightmapWorker = new Worker('worker.heightmap.js', { type: 'module' });
+
 function handleWorkerMessage(ev, workerName) {
   const msg = ev.data;
   if (msg.cmd === 'progress') {
     if (typeof progressModal !== 'undefined' && !progressModal._isShown) showProgressModal(workerName);
-    updateProgress(msg.phase, msg.percent, workerName);
+    updateProgress(msg.phase, msg.percent, msg.type, workerName);
   }
-  else if (msg.cmd === 'waterlineResult' || msg.cmd === 'roughResult' || msg.cmd === 'rasterResult') {
+  else if (msg.cmd === 'waterlineResult' || msg.cmd === 'roughResult') {
     drawLayers(msg);
     lastMsg = msg;
   }
   else if (msg.cmd === 'gcodeResult') {
-    gcodeArea.value = msg.gcode;
-    hideProgressModal(); // ** THE FIX ** - Hide the modal on completion.
-    showCompletion('G-code generated!');
+    progressBar.style.width = `100%`;
     const blob = new Blob([msg.gcode], {type:'text/plain'});
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url; a.download = 'toolpaths.gcode'; a.click();
     URL.revokeObjectURL(url);
+    setTimeout(() => hideProgressModal(), 500);
+    showCompletion('G-code generated!');
   }
   else if (msg.cmd === 'error') {
     hideProgressModal();
@@ -484,8 +480,9 @@ function handleWorkerMessage(ev, workerName) {
 }
 
 waterlineWorker.onmessage = (ev) => handleWorkerMessage(ev, 'Waterline');
-rasterWorker.onmessage = (ev) => handleWorkerMessage(ev, 'Raster');
 gcodeWorker.onmessage = (ev) => handleWorkerMessage(ev, 'G-code');
+heightmapWorker.onmessage = (ev) => handleWorkerMessage(ev, 'Heightmap');
+
 
 function sendMeshToWorker() {
     if (!loadedMesh) return null;
@@ -499,16 +496,21 @@ function sendMeshToWorker() {
     const arr = new Float32Array(posAttr.array);
     const triCount = arr.length / 9;
     const bbox = new THREE.Box3().setFromBufferAttribute(posAttr);
+
     return { triangles: arr, triCount, bbox };
 }
 
 // --- Path Generation and G-code Export ---
+// MODIFIED: genPathsBtn listener updated for allowance and percentage stepover
 genPathsBtn.addEventListener('click', () => {
   if (!loadedMesh) { alert('Load a 3D model first'); return; }
   pathGroup.clear();
-  gcodeArea.value = 'Worker running...';
+
+  const operation = operationSelect.value;
+
   const data = sendMeshToWorker();
   if (!data) return;
+
   const dia = parseFloat(diaInput.value);
   const stepdown = parseFloat(stepdownInput.value);
   const baseParams = {
@@ -522,22 +524,24 @@ genPathsBtn.addEventListener('click', () => {
       dia,
       stepdown
   };
-  const operation = operationSelect.value;
+
   if (operation === 'roughing') {
     const stockAllow = parseFloat(stockAllowInput.value) || 0;
-    const effectiveDia = dia + (stockAllow * 2);
-    let stepover = parseFloat(stepoverInput.value);
-    if (!stepover || isNaN(stepover)) stepover = effectiveDia * 0.6;
-    waterlineWorker.postMessage({ ...baseParams, cmd: 'waterline', mode: 'rough', stepover }, [baseParams.triangles.buffer]);
+    const stepoverPercent = parseFloat(stepoverInput.value) || 40; // default 40%
+    const stepover = dia * (stepoverPercent / 100.0); // calculate stepover in mm
+
+    waterlineWorker.postMessage({
+        ...baseParams,
+        cmd: 'waterline',
+        mode: 'rough',
+        stepover,
+        stockAllow // Pass allowance to worker
+    }, [baseParams.triangles.buffer]);
+
   } else if (operation === 'finishing') {
     const strategy = strategySelect.value;
-    if (strategy === 'raster') {
-        const stepover = parseFloat(stepoverInput.value);
-        const dir = dirInput.value;
-        rasterWorker.postMessage({ ...baseParams, cmd: 'raster', stepover, dir }, [baseParams.triangles.buffer]);
-    } else {
-        waterlineWorker.postMessage({ ...baseParams, cmd: 'waterline', mode: 'waterline', stepover: undefined }, [baseParams.triangles.buffer]);
-    }
+    // NOTE: Raster finishing is not implemented, so only waterline is handled.
+    waterlineWorker.postMessage({ ...baseParams, cmd: 'waterline', mode: 'waterline' }, [baseParams.triangles.buffer]);
   }
 });
 
@@ -545,33 +549,13 @@ function drawLayers(msg) {
   pathGroup.clear();
   lastPaths = [];
   const layers = msg.layers || [];
-  const showOutline = document.getElementById('showOutline').checked;
-  const showVectors = document.getElementById('showVectors').checked;
+
+
   const showToolpath = document.getElementById('showToolpath').checked;
-  const showMask = document.getElementById('showMask').checked;
+
   const SCALE = 10000;
   for (const layer of layers) {
     const z = layer.Z;
-    if (showOutline && layer.Outline.length) {
-      const outline = layer.Outline[0];
-      const pts = outline.map(pt => new THREE.Vector3(pt.X / SCALE, pt.Y / SCALE, z));
-      const geom = new THREE.BufferGeometry().setFromPoints(pts);
-      pathGroup.add(new THREE.LineLoop(geom, new THREE.LineBasicMaterial({ color: 0xff0000, transparent: true, opacity: 0.8 })));
-    }
-    if (showVectors) {
-      for (const vector of layer.Vectors) {
-        const pts = vector.map(pt => new THREE.Vector3(pt.X / SCALE, pt.Y / SCALE, z));
-        const geom = new THREE.BufferGeometry().setFromPoints(pts);
-        pathGroup.add(new THREE.LineLoop(geom, new THREE.LineBasicMaterial({ color: 0x0000ff, transparent: true, opacity: 0.5 })));
-      }
-    }
-    if (showMask) {
-      for (const mask of layer.ShowMask) {
-        const pts = mask.map(pt => new THREE.Vector3(pt.X / SCALE, pt.Y / SCALE, z));
-        const geom = new THREE.BufferGeometry().setFromPoints(pts);
-        pathGroup.add(new THREE.LineLoop(geom, new THREE.LineBasicMaterial({ color: 0xffff00, transparent: true, opacity: 0.3 })));
-      }
-    }
     if (showToolpath && layer.Toolpath) {
       for (const path of layer.Toolpath) {
         const pts = [];
@@ -586,7 +570,7 @@ function drawLayers(msg) {
   setTimeout(() => hideProgressModal(), 500);
 }
 
-['showOutline', 'showVectors', 'showToolpath', 'showMask'].forEach(id => {
+['showToolpath'].forEach(id => {
   document.getElementById(id).addEventListener('change', () => {
     if (lastMsg && lastMsg.layers) drawLayers(lastMsg);
   });
@@ -597,7 +581,6 @@ exportBtn.addEventListener('click', () => {
     alert('No toolpaths have been generated yet.');
     return;
   }
-  gcodeArea.value = 'Generating G-code in worker...';
   showProgressModal('G-code');
   const plainPaths = lastPaths.map(path => path.map(p => ({ x: p.x, y: p.y, z: p.z })));
 
@@ -617,7 +600,7 @@ viewTopBtn.addEventListener('click', () => {
 });
 
 
-// --- Modals and Toasts (UPDATED) ---
+// --- Modals and Toasts (no changes) ---
 const progressModal = new bootstrap.Modal(document.getElementById('progressModal'), {backdrop:'static', keyboard:false});
 const progressBar = document.getElementById('progressBar');
 const progressText = document.getElementById('progressText');
@@ -627,6 +610,7 @@ const errorText = document.getElementById('errorText');
 const completionToastEl = document.getElementById('completionToast');
 const completionToast = new bootstrap.Toast(completionToastEl, {delay: 4000});
 const completionText = document.getElementById('completionText');
+
 function showProgressModal(workerName) {
   progressBar.style.width = '0%'; progressBar.textContent = '';
   progressText.textContent = `${workerName} - Starting...`;
@@ -634,28 +618,40 @@ function showProgressModal(workerName) {
   progressModal.show();
 }
 
-function updateProgress(phase, percent, workerName) {
-    if (workerName === 'G-code') {
+function updateProgress(phase, percent, type, workerName) {
+  console.log(phase, percent, type, workerName)
+    // --- Simple workers: just 1 phase ---
+    if (type === 'gcode') {
+        const friendlyName = workerName === 'G-code' ? 'G-code' : 'GPU Heightmap';
         progressBar.style.width = `${percent}%`;
-        progressText.textContent = `Generating G-code...`;
-        progressTitle.textContent = `Generating G-code... ${percent}%`;
+        progressText.textContent = `Generating ${friendlyName}...`;
+        progressTitle.textContent = `Generating ${friendlyName}... ${percent}%`;
         return;
     }
 
-    const phaseDescriptions = {
-        1: 'Slicing Model',
-        2: 'Generating Collision Masks',
-        3: 'Generating Toolpaths' // Simplified back to 3 phases
+    // --- Multi-phase workers ---
+    const descriptions = {
+        Waterline: {
+            1: 'Slicing Model',
+            2: 'Generating Collision Masks',
+            3: 'Generating Toolpaths'
+        }
     };
-    const stageTotal = Object.keys(phaseDescriptions).length;
+
+    const phaseDescriptions = descriptions[workerName] || {};
+    const stageTotal = Object.keys(phaseDescriptions).length || 1;
+
+    // Scale percent into overall
     const start = (phase - 1) / stageTotal * 100;
     const end = phase / stageTotal * 100;
     const overallPercent = start + (percent / 100) * (end - start);
+
     const friendlyName = phaseDescriptions[phase] || `Phase ${phase}`;
     progressBar.style.width = `${overallPercent}%`;
     progressText.textContent = `${friendlyName}...`;
-    progressTitle.textContent = `Processing... ${Math.round(overallPercent)}%`;
+    progressTitle.textContent = `Processing ${workerName}... ${Math.round(overallPercent)}%`;
 }
+
 
 function hideProgressModal() { progressModal.hide(); }
 function showError(message) { errorText.textContent = message; errorModal.show(); }
@@ -664,7 +660,7 @@ function showCompletion(message) { completionText.textContent = message; complet
 </script>
 
 <!-- Bootstrap 5 JS bundle -->
-<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/bootstrap/5.3.7/js/bootstrap.bundle.min.js"></script>
 
 </body>
 </html>

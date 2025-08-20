@@ -44,18 +44,15 @@ self.onmessage = function(e) {
       ];
 
       const totalPaths = paths.length;
-      // Report progress every 250 segments to avoid message flooding
-      const reportInterval = 250;
 
       for (let i = 0; i < totalPaths; i++) {
         const segLines = getGcodeForSegment(paths[i], options);
         allLines.push(...segLines);
 
         // Send a progress update at the specified interval or on the last item
-        if ((i + 1) % reportInterval === 0 || (i + 1) === totalPaths) {
-          const percent = Math.round(((i + 1) / totalPaths) * 100);
-          self.postMessage({ cmd: 'progress', phase: 1, percent: percent });
-        }
+        const percent = Math.round(((i + 1) / totalPaths) * 100);
+        self.postMessage({ cmd: 'progress', type: 'gcode', phase: 1, percent: percent });
+
       }
 
       allLines.push('M30 ; End of program');

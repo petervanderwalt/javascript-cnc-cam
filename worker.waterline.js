@@ -73,10 +73,10 @@ function offsetContoursScaled(pathsScaled, offsetScaled, joinType = ClipperLib.J
 
 function generateBBoxOutline(bbox, radius) {
   const { minX, maxX, minY, maxY } = bbox;
-  const p0 = { X: Math.round((minX - radius) * SCALE), Y: Math.round((minY - radius) * SCALE) };
-  const p1 = { X: Math.round((maxX + radius) * SCALE), Y: Math.round((minY - radius) * SCALE) };
-  const p2 = { X: Math.round((maxX + radius) * SCALE), Y: Math.round((maxY + radius) * SCALE) };
-  const p3 = { X: Math.round((minX - radius) * SCALE), Y: Math.round((maxY + radius) * SCALE) };
+  const p0 = { X: Math.round((minX - (radius*2)) * SCALE), Y: Math.round((minY - (radius*2)) * SCALE) };
+  const p1 = { X: Math.round((maxX + (radius*2)) * SCALE), Y: Math.round((minY - (radius*2)) * SCALE) };
+  const p2 = { X: Math.round((maxX + (radius*2)) * SCALE), Y: Math.round((maxY + (radius*2)) * SCALE) };
+  const p3 = { X: Math.round((minX - (radius*2)) * SCALE), Y: Math.round((maxY + (radius*2)) * SCALE) };
   return [[p0,p1,p2,p3]];
 }
 
@@ -84,7 +84,8 @@ function clonePaths(paths) {
   return paths.map(p => p.map(pt => ({ X: pt.X, Y: pt.Y })));
 }
 
-function generateWaterlinePaths(triangles, triCount, bbox, dia, stepdown, mode, stepover) {
+// MODIFIED: Function now accepts stockAllow
+function generateWaterlinePaths(triangles, triCount, bbox, dia, stepdown, mode, stepover, stockAllow) {
   const radius = dia / 2;
   let zmin = bbox.minZ;
   if (zmin > 0) zmin = 0;
@@ -113,7 +114,7 @@ function generateWaterlinePaths(triangles, triCount, bbox, dia, stepdown, mode, 
     }
     layers.push(layer);
     const progressPercent = ((zmax - z) / (zmax - zmin)) * 100;
-    self.postMessage({ cmd: 'progress', phase: 1, percent: Math.min(100, Math.round(progressPercent)) });
+    self.postMessage({ cmd: 'progress', type: 'waterline', phase: 1, percent: Math.min(100, Math.round(progressPercent)) });
   }
 
   // --- Phase 2: Generating Collision Masks ---
@@ -130,7 +131,7 @@ function generateWaterlinePaths(triangles, triCount, bbox, dia, stepdown, mode, 
       accumulatedShadow = sol;
     }
     const shadowProgress = ((i + 1) / layers.length) * 100;
-    self.postMessage({ cmd: 'progress', phase: 2, percent: Math.min(100, Math.round(shadowProgress)) });
+    self.postMessage({ cmd: 'progress', type: 'waterline', phase: 2, percent: Math.min(100, Math.round(shadowProgress)) });
   }
 
   // --- Phase 3: Generating Toolpaths ---
@@ -145,24 +146,17 @@ function generateWaterlinePaths(triangles, triCount, bbox, dia, stepdown, mode, 
         return path3D.flat();
     };
 
+    const unionClipper = new ClipperLib.Clipper();
+    unionClipper.AddPaths(layer.Vectors, ClipperLib.PolyType.ptSubject, true);
+    if (layer.CollisionMask.length > 0) {
+      unionClipper.AddPaths(layer.CollisionMask, ClipperLib.PolyType.ptClip, true);
+    }
+    const totalSolidArea = new ClipperLib.Paths();
+    if (layer.Vectors.length > 0 || layer.CollisionMask.length > 0) {
+       unionClipper.Execute(ClipperLib.ClipType.ctUnion, totalSolidArea, ClipperLib.PolyFillType.pftNonZero, ClipperLib.PolyFillType.pftNonZero);
+    }
+
     if (isFinishing) {
-      // --- FINISHING LOGIC (Robust Method) ---
-
-      // 1. Create a single "solid" profile by taking the union of the current layer's
-      //    geometry and the shadow cast from all layers above.
-      const unionClipper = new ClipperLib.Clipper();
-      unionClipper.AddPaths(layer.Vectors, ClipperLib.PolyType.ptSubject, true);
-      if (layer.CollisionMask.length > 0) {
-        unionClipper.AddPaths(layer.CollisionMask, ClipperLib.PolyType.ptClip, true);
-      }
-      const totalSolidArea = new ClipperLib.Paths();
-      // Only run union if there is something to union
-      if (layer.Vectors.length > 0 || layer.CollisionMask.length > 0) {
-         unionClipper.Execute(ClipperLib.ClipType.ctUnion, totalSolidArea, ClipperLib.PolyFillType.pftNonZero, ClipperLib.PolyFillType.pftNonZero);
-      }
-
-      // 2. The final finishing path is a simple offset outwards from this combined shape.
-      //    This correctly wraps around all visible geometry without being clipped by an outline.
       if (totalSolidArea.length > 0) {
           const finalPath = offsetContoursScaled(totalSolidArea, offsetScaled, ClipperLib.JoinType.jtRound, ClipperLib.EndType.etClosedPolygon);
           for (const p of finalPath) {
@@ -172,15 +166,25 @@ function generateWaterlinePaths(triangles, triCount, bbox, dia, stepdown, mode, 
           }
       }
     } else {
-      // --- ROUGHING LOGIC (Unchanged) ---
+      // --- ROUGHING LOGIC (MODIFIED to include stock allowance) ---
+      let areaToMachine = totalSolidArea;
+      // 1. If stock allowance is specified, offset the solid area outwards first.
+      if (stockAllow && stockAllow > 0) {
+        const stockAllowScaled = Math.round(stockAllow * SCALE);
+        areaToMachine = offsetContoursScaled(totalSolidArea, stockAllowScaled, ClipperLib.JoinType.jtRound, ClipperLib.EndType.etClosedPolygon);
+      }
+
+      // 2. Define the pocket as the difference between the stock outline and the (now offset) solid shape.
       const pocketClipper = new ClipperLib.Clipper();
       pocketClipper.AddPaths(layer.Outline, ClipperLib.PolyType.ptSubject, true);
-      if (layer.Vectors.length > 0) pocketClipper.AddPaths(layer.Vectors, ClipperLib.PolyType.ptClip, true);
-      if (layer.CollisionMask.length > 0) pocketClipper.AddPaths(layer.CollisionMask, ClipperLib.PolyType.ptClip, true);
+      if (areaToMachine.length > 0) {
+        pocketClipper.AddPaths(areaToMachine, ClipperLib.PolyType.ptClip, true);
+      }
 
       const pocketArea = new ClipperLib.Paths();
       pocketClipper.Execute(ClipperLib.ClipType.ctDifference, pocketArea, ClipperLib.PolyFillType.pftNonZero, ClipperLib.PolyFillType.pftNonZero);
 
+      // 3. Generate pocketing paths by repeatedly offsetting inwards.
       if (pocketArea.length > 0) {
         let currentPaths = offsetContoursScaled(pocketArea, -offsetScaled, ClipperLib.JoinType.jtRound, ClipperLib.EndType.etClosedPolygon);
         while (currentPaths.length > 0) {
@@ -200,7 +204,7 @@ function generateWaterlinePaths(triangles, triCount, bbox, dia, stepdown, mode, 
     }
 
     const toolpathProgress = ((i + 1) / layers.length) * 100;
-    self.postMessage({ cmd: 'progress', phase: 3, percent: Math.min(100, Math.round(toolpathProgress)) });
+    self.postMessage({ cmd: 'progress', type: 'waterline', phase: 3, percent: Math.min(100, Math.round(toolpathProgress)) });
   }
 
   return layers;
@@ -209,9 +213,10 @@ function generateWaterlinePaths(triangles, triCount, bbox, dia, stepdown, mode, 
 self.onmessage = function(e) {
   const msg = e.data;
   if (msg.cmd === 'waterline') {
-    const { triangles, triCount, bbox, dia, stepdown, mode, stepover } = msg;
+    // MODIFIED: Now receives stockAllow
+    const { triangles, triCount, bbox, dia, stepdown, mode, stepover, stockAllow } = msg;
     try {
-      const res = generateWaterlinePaths(triangles, triCount, bbox, dia, stepdown, mode, stepover);
+      const res = generateWaterlinePaths(triangles, triCount, bbox, dia, stepdown, mode, stepover, stockAllow);
       self.postMessage({ cmd: 'waterlineResult', layers: res });
     } catch (err) {
       self.postMessage({ cmd: 'error', message: 'Waterline error: ' + (err && err.message) });
