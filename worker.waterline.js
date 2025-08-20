@@ -71,19 +71,13 @@ function unionContours(contoursScaled) {
 }
 
 function offsetContoursScaled(pathsScaled, offsetScaled, joinType = ClipperLib.JoinType.jtRound, endType = ClipperLib.EndType.etClosedPolygon) {
-  // First simplify the input paths
   const simplifiedPaths = ClipperLib.Clipper.SimplifyPolygons(pathsScaled, ClipperLib.PolyFillType.pftEvenOdd);
-
-  // Create ClipperOffset and add simplified paths
   const co = new ClipperLib.ClipperOffset();
   co.AddPaths(simplifiedPaths, joinType, endType);
-
-  // Execute offset
   const sol = new ClipperLib.Paths();
   co.Execute(sol, offsetScaled);
   return sol;
 }
-
 
 // Build a simple rectangular outline from bbox
 function generateBBoxOutline(bbox) {
@@ -92,7 +86,7 @@ function generateBBoxOutline(bbox) {
   const p1 = { X: Math.round(maxX*SCALE), Y: Math.round(minY*SCALE) };
   const p2 = { X: Math.round(maxX*SCALE), Y: Math.round(maxY*SCALE) };
   const p3 = { X: Math.round(minX*SCALE), Y: Math.round(maxY*SCALE) };
-  // ensure closed path
+  // ensure closed path by adding the first point again
   return [[p0,p1,p2,p3,p0]];
 }
 
@@ -101,7 +95,7 @@ function clonePaths(paths) {
 }
 
 
-function generateWaterlinePaths(triangles, triCount, bbox, dia, stepdown, mode) {
+function generateWaterlinePaths(triangles, triCount, bbox, dia, stepdown, mode, stepover) {
   const radius = dia / 2;
   let zmin = bbox.minZ;
   if (zmin > 0) zmin = 0;
@@ -111,13 +105,9 @@ function generateWaterlinePaths(triangles, triCount, bbox, dia, stepdown, mode) 
   const layers = [];
 
   // --- Create layers ---
-  // --- Create layers ---
-  // --- Create layers ---
-
   for (let z = zmax; z >= zmin - 1e-9; z -= stepdown) {
-    const layer = { Z: z, Outline: fullOutline.map(p => p.map(pt => ({ X: pt.X, Y: pt.Y }))), Vectors: [], Toolpath: [] };
+    const layer = { Z: z, Outline: clonePaths(fullOutline), Vectors: [], Toolpath: [], ShowMask: [] };
 
-    // intersect triangles with this Z plane
     const segments = [];
     for (let ti = 0; ti < triCount; ti++) {
       const base = ti * 9;
@@ -135,109 +125,105 @@ function generateWaterlinePaths(triangles, triCount, bbox, dia, stepdown, mode) 
         const path = c.map(p => ({ X: Math.round(p[0]*SCALE), Y: Math.round(p[1]*SCALE) }));
         if (path.length >= 3 && polygonArea2D(path) > MIN_POLY_AREA) scaledVectors.push(path);
       }
-
       layer.Vectors = scaledVectors;
     }
 
     layers.push(layer);
-
-    // progress update
-    const progressPercent = ((z - zmin) / (zmax - zmin)) * 100;
+    const progressPercent = ((zmax - z) / (zmax - zmin)) * 100;
     self.postMessage({ cmd: 'progress', phase: 1, percent: Math.min(100, Math.round(progressPercent)) });
   }
 
   // --- Shadow masks (top-down) ---
-  // --- Shadow masks (top-down) ---
-  // --- Shadow masks (top-down) ---
-  const shadowMasks = new Array(layers.length);
-  let accumulatedMask = []; // union of all layers above
-
+  let accumulatedMask = [];
   for (let i = layers.length - 1; i >= 0; i--) {
     const currentVectors = layers[i].Vectors;
-
-    // Store shadow mask for this layer: only layers above
     layers[i].ShowMask = accumulatedMask.length ? clonePaths(accumulatedMask) : [];
-
-    // Merge current layer into accumulatedMask for layers below
     if (currentVectors.length > 0) {
       const c = new ClipperLib.Clipper();
       c.AddPaths(accumulatedMask, ClipperLib.PolyType.ptSubject, true);
-      c.AddPaths(currentVectors, ClipperLib.PolyType.ptSubject, true);
+      c.AddPaths(currentVectors, ClipperLib.PolyType.ptClip, true);
       const sol = new ClipperLib.Paths();
       c.Execute(ClipperLib.ClipType.ctUnion, sol, ClipperLib.PolyFillType.pftNonZero, ClipperLib.PolyFillType.pftNonZero);
       accumulatedMask = clonePaths(sol);
     }
-
-    // Progress update
     const shadowProgress = ((layers.length - 1 - i) / layers.length) * 100;
-    self.postMessage({
-      cmd: 'progress',
-      phase: 2,
-      percent: Math.min(100, Math.round(shadowProgress))
-    });
+    self.postMessage({ cmd: 'progress', phase: 2, percent: Math.min(100, Math.round(shadowProgress)) });
   }
-  // --- Toolpaths with shadow masks ---
-  // --- Toolpaths with shadow masks ---
-  // --- Toolpaths with shadow masks ---
 
+  // --- Toolpaths with shadow masks ---
   const offsetScaled = Math.round(radius * SCALE);
   for (let i = 0; i < layers.length; i++) {
     const layer = layers[i];
     const z = layer.Z;
 
-    if (layer.Vectors.length > 0) {
-      let combined = layer.Vectors;
+    // Helper to close a 2D path from Clipper and convert to a flat 3D array
+    const closeAndFlatten = (p) => {
+        if (!p || p.length < 3) return null;
+        const path3D = p.map(pt => [pt.X / SCALE, pt.Y / SCALE, z]);
+        path3D.push(path3D[0].slice()); // Close the loop by adding the first point again
+        return path3D.flat();
+    };
 
-      // Apply shadow mask intersection to prevent undercutting
-      if (layer.ShowMask && layer.ShowMask.length) {
-        const c = new ClipperLib.Clipper();
-        c.AddPaths(combined, ClipperLib.PolyType.ptSubject, true);
-        c.AddPaths(layer.ShowMask, ClipperLib.PolyType.ptClip, true);
-        const sol = new ClipperLib.Paths();
-        c.Execute(
-          ClipperLib.ClipType.ctIntersection,
-          sol,
-          ClipperLib.PolyFillType.pftNonZero,
-          ClipperLib.PolyFillType.pftNonZero
-        );
-        combined = sol;
+    if (mode === 'rough') {
+      const c = new ClipperLib.Clipper();
+      c.AddPaths(layer.Outline, ClipperLib.PolyType.ptSubject, true);
+      if (layer.Vectors.length > 0) {
+        c.AddPaths(layer.Vectors, ClipperLib.PolyType.ptClip, true);
       }
+      const pocketArea = new ClipperLib.Paths();
+      c.Execute(ClipperLib.ClipType.ctDifference, pocketArea, ClipperLib.PolyFillType.pftNonZero, ClipperLib.PolyFillType.pftNonZero);
 
-      if (combined && combined.length) {
-        const offsetPolys = offsetContoursScaled(
-          combined,
-          offsetScaled,
-          ClipperLib.JoinType.jtRound,
-          ClipperLib.EndType.etClosedPolygon
-        );
-        for (const p of offsetPolys) {
-          if (polygonArea2D(p) < MIN_POLY_AREA) continue;
-          const path3D = p.map(pt => [pt.X / SCALE, pt.Y / SCALE, z]);
-          layer.Toolpath.push(path3D.flat());
+      if (pocketArea.length > 0) {
+        let currentPaths = offsetContoursScaled(pocketArea, -offsetScaled, ClipperLib.JoinType.jtRound, ClipperLib.EndType.etClosedPolygon);
+        while (currentPaths.length > 0) {
+          for (const p of currentPaths) {
+            if (polygonArea2D(p) < MIN_POLY_AREA) continue;
+            const flatPath = closeAndFlatten(p);
+            if(flatPath) layer.Toolpath.push(flatPath);
+          }
+          if (stepover > 0) {
+            const stepoverScaled = Math.round(stepover * SCALE);
+            currentPaths = offsetContoursScaled(currentPaths, -stepoverScaled, ClipperLib.JoinType.jtRound, ClipperLib.EndType.etClosedPolygon);
+          } else {
+            currentPaths = [];
+          }
+        }
+      }
+    } else { // Handles 'waterline' (finishing) and 'profile'
+      if (layer.Vectors.length > 0) {
+        let combined = layer.Vectors;
+        if (layer.ShowMask && layer.ShowMask.length) {
+          const c = new ClipperLib.Clipper();
+          c.AddPaths(combined, ClipperLib.PolyType.ptSubject, true);
+          c.AddPaths(layer.ShowMask, ClipperLib.PolyType.ptClip, true);
+          const sol = new ClipperLib.Paths();
+          c.Execute(ClipperLib.ClipType.ctIntersection, sol, ClipperLib.PolyFillType.pftNonZero, ClipperLib.PolyFillType.pftNonZero);
+          combined = sol;
+        }
+
+        if (combined && combined.length) {
+          const offsetPolys = offsetContoursScaled(combined, offsetScaled, ClipperLib.JoinType.jtRound, ClipperLib.EndType.etClosedPolygon);
+          for (const p of offsetPolys) {
+            if (polygonArea2D(p) < MIN_POLY_AREA) continue;
+            const flatPath = closeAndFlatten(p);
+            if(flatPath) layer.Toolpath.push(flatPath);
+          }
         }
       }
     }
 
     const offsetProgress = ((i + 1) / layers.length) * 100;
-    self.postMessage({
-      cmd: 'progress',
-      phase: 3,
-      percent: Math.min(100, Math.round(offsetProgress))
-    });
+    self.postMessage({ cmd: 'progress', phase: 3, percent: Math.min(100, Math.round(offsetProgress)) });
   }
-
   return layers;
 }
-
-
-
 
 self.onmessage = function(e) {
   const msg = e.data;
   if (msg.cmd === 'waterline') {
-    const { triangles, triCount, bbox, dia, stepdown, mode } = msg;
+    const { triangles, triCount, bbox, dia, stepdown, mode, stepover } = msg;
     try {
-      const res = generateWaterlinePaths(triangles, triCount, bbox, dia, stepdown, mode);
+      const res = generateWaterlinePaths(triangles, triCount, bbox, dia, stepdown, mode, stepover);
       self.postMessage({ cmd: 'waterlineResult', layers: res });
     } catch (err) {
       self.postMessage({ cmd: 'error', message: 'Waterline error: ' + (err && err.message) });
