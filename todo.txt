@@ -1,0 +1,3 @@
+- shadowmasks has a bug that leaves toolpaths in like mounting hole on oldmansplash
+- add raster
+- add layer toolpath previews
