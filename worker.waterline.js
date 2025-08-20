@@ -191,22 +191,32 @@ function generateWaterlinePaths(triangles, triCount, bbox, dia, stepdown, mode, 
       }
     } else { // Handles 'waterline' (finishing) and 'profile'
       if (layer.Vectors.length > 0) {
-        let combined = layer.Vectors;
-        if (layer.ShowMask && layer.ShowMask.length) {
+        // First, generate the "ideal" toolpath by offsetting the current layer's vectors outwards.
+        const idealPath = offsetContoursScaled(layer.Vectors, offsetScaled, ClipperLib.JoinType.jtRound, ClipperLib.EndType.etClosedPolygon);
+
+        // To prevent collisions, we must clip this ideal path against the geometry of the layer ABOVE,
+        // which acts as a "no-go" zone.
+        const vectorsAbove = (i > 0) ? layers[i-1].Vectors : [];
+
+        let finalPath = idealPath;
+
+        if (vectorsAbove.length > 0) {
+          // If there is geometry on the layer above, subtract its area from our ideal toolpath.
+          // This prevents the tool from moving "under" the part and causing a collision.
           const c = new ClipperLib.Clipper();
-          c.AddPaths(combined, ClipperLib.PolyType.ptSubject, true);
-          c.AddPaths(layer.ShowMask, ClipperLib.PolyType.ptClip, true);
+          c.AddPaths(idealPath, ClipperLib.PolyType.ptSubject, true);
+          c.AddPaths(vectorsAbove, ClipperLib.PolyType.ptClip, true);
           const sol = new ClipperLib.Paths();
-          c.Execute(ClipperLib.ClipType.ctIntersection, sol, ClipperLib.PolyFillType.pftNonZero, ClipperLib.PolyFillType.pftNonZero);
-          combined = sol;
+          c.Execute(ClipperLib.ClipType.ctDifference, sol, ClipperLib.PolyFillType.pftNonZero, ClipperLib.PolyFillType.pftNonZero);
+          finalPath = sol;
         }
 
-        if (combined && combined.length) {
-          const offsetPolys = offsetContoursScaled(combined, offsetScaled, ClipperLib.JoinType.jtRound, ClipperLib.EndType.etClosedPolygon);
-          for (const p of offsetPolys) {
+        // Add the resulting, correctly clipped path(s) to the toolpath list for this layer.
+        if (finalPath && finalPath.length) {
+          for (const p of finalPath) {
             if (polygonArea2D(p) < MIN_POLY_AREA) continue;
             const flatPath = closeAndFlatten(p);
-            if(flatPath) layer.Toolpath.push(flatPath);
+            if (flatPath) layer.Toolpath.push(flatPath);
           }
         }
       }
