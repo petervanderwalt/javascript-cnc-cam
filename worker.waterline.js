@@ -1,4 +1,4 @@
-// worker.js (Waterline + profile mode)
+// worker.js (Waterline mode)
 importScripts('./clipper.js'); // keep clipper
 const SCALE = 10000;
 
@@ -189,7 +189,7 @@ function generateWaterlinePaths(triangles, triCount, bbox, dia, stepdown, mode, 
           }
         }
       }
-    } else { // Handles 'waterline' (finishing) and 'profile'
+    } else { // Handles 'waterline' (finishing)
       if (layer.Vectors.length > 0) {
         // First, generate the "ideal" toolpath by offsetting the current layer's vectors outwards.
         const idealPath = offsetContoursScaled(layer.Vectors, offsetScaled, ClipperLib.JoinType.jtRound, ClipperLib.EndType.etClosedPolygon);

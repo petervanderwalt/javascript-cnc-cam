@@ -92,23 +92,23 @@
         <input id="file" type="file" accept=".stl" class="d-none" />
       </div>
 
-      <div class="mb-2">
-        <div class="input-group input-group-sm">
-          <span class="input-group-text">Mode</span>
-          <select id="mode" class="form-select">
-            <option value="raster">Raster</option>
-            <option value="waterline" selected>Waterline</option>
-          </select>
-        </div>
-      </div>
-
+      <!-- New UI Structure -->
       <div class="mb-2">
         <div class="input-group input-group-sm">
           <span class="input-group-text">Operation</span>
           <select id="operation" class="form-select">
             <option value="roughing">Roughing</option>
             <option value="finishing" selected>Finishing</option>
-            <option value="profile">Profile</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="mb-2" id="strategyGroup">
+        <div class="input-group input-group-sm">
+          <span class="input-group-text">Strategy</span>
+          <select id="strategy" class="form-select">
+            <option value="waterline" selected>Waterline</option>
+            <option value="raster">Raster</option>
           </select>
         </div>
       </div>
@@ -129,7 +129,7 @@
         </div>
       </div>
 
-      <div class="mb-2" id="stepoverGroup" style="display:none;">
+      <div class="mb-2" id="stepoverGroup">
         <div class="input-group input-group-sm">
           <span class="input-group-text">Stepover</span>
           <input id="stepover" type="number" value="2" step="0.1" class="form-control form-control-sm" />
@@ -145,13 +145,15 @@
         </div>
       </div>
 
-      <fieldset class="mb-4" id="dirGroup">
-        <legend class="form-label small fw-semibold">Raster Direction</legend>
-        <select id="dir" class="form-select form-select-sm">
-          <option value="x">X (lines along Y)</option>
-          <option value="y">Y (lines along X)</option>
-        </select>
-      </fieldset>
+      <div class="mb-4" id="dirGroup">
+        <div class="input-group input-group-sm">
+            <span class="input-group-text">Raster Direction</span>
+            <select id="dir" class="form-select form-select-sm">
+                <option value="x">X (lines along Y)</option>
+                <option value="y">Y (lines along X)</option>
+            </select>
+        </div>
+      </div>
 
       <button id="genPaths" class="btn btn-success btn-sm">
         <i class="fas fa-cogs me-1"></i> Generate Toolpaths
@@ -167,12 +169,10 @@
           <input class="form-check-input" type="checkbox" value="vectors" id="showVectors" checked>
           <label class="form-check-label" for="showVectors">Vectors (blue)</label>
         </div>
-
         <div class="form-check">
           <input class="form-check-input" type="checkbox" value="vectors" id="showMask" checked>
           <label class="form-check-label" for="showMask">ShadowMask (yellow)</label>
         </div>
-
         <div class="form-check">
           <input class="form-check-input" type="checkbox" value="toolpath" id="showToolpath" checked>
           <label class="form-check-label" for="showToolpath">Toolpath (green)</label>
@@ -196,7 +196,7 @@
     <div id="viewer"></div>
   </div>
 
-<!-- Hidden Modals -->
+<!-- Hidden Modals (no changes) -->
   <!-- Progress Modal -->
   <div class="modal fade" id="progressModal" tabindex="-1" aria-hidden="true">
     <div class="modal-dialog modal-dialog-centered">
@@ -214,7 +214,6 @@
       </div>
     </div>
   </div>
-
   <!-- Error Modal -->
   <div class="modal fade" id="errorModal" tabindex="-1" aria-hidden="true">
     <div class="modal-dialog modal-dialog-centered">
@@ -229,7 +228,6 @@
       </div>
     </div>
   </div>
-
   <!-- Completion Toast -->
   <div class="position-fixed bottom-0 end-0 p-3" style="z-index: 1055">
     <div id="completionToast" class="toast align-items-center text-bg-success border-0" role="alert" aria-live="assertive" aria-atomic="true">
@@ -247,7 +245,7 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { MOUSE } from 'three';
 import { STLLoader } from 'three/addons/loaders/STLLoader.js';
 
-// Renderer + container setup
+// --- 3D Scene Setup (no changes) ---
 const container = document.getElementById('viewer');
 const renderer = new THREE.WebGLRenderer({antialias:true});
 function resizeRenderer() {
@@ -257,11 +255,8 @@ function resizeRenderer() {
 resizeRenderer();
 renderer.setPixelRatio(window.devicePixelRatio);
 container.appendChild(renderer.domElement);
-
-// Scene + camera setup
 const scene = new THREE.Scene();
-scene.background = new THREE.Color(0xffffff); // Changed from dark (#222222) to white
-
+scene.background = new THREE.Color(0xffffff);
 let frustumSize = 400;
 const uiWidth = document.getElementById('ui').offsetWidth;
 const aspect = (window.innerWidth - uiWidth) / window.innerHeight;
@@ -273,56 +268,48 @@ const camera = new THREE.OrthographicCamera(
 camera.up.set(0,0,1);
 camera.position.set(200,200,200);
 camera.lookAt(0,0,0);
-
 const controls = new OrbitControls(camera, renderer.domElement);
 controls.enableDamping = true;
-
-// Make mouse mappings friendly for a top-down CAM view
-controls.mouseButtons = {
-  LEFT: MOUSE.PAN,
-  MIDDLE: MOUSE.DOLLY,
-  RIGHT: MOUSE.ROTATE
-};
+controls.mouseButtons = { LEFT: MOUSE.PAN, MIDDLE: MOUSE.DOLLY, RIGHT: MOUSE.ROTATE };
 controls.screenSpacePanning = true;
-
 const grid = new THREE.GridHelper(400, 40, 0xcccccc, 0xeeeeee);
 grid.rotation.x = Math.PI/2;
 scene.add(grid);
-
 const light = new THREE.DirectionalLight(0xffffff, 1);
 light.position.set(1,2,3);
 scene.add(light);
 scene.add(new THREE.AmbientLight(0x666666));
-
-// Groups
 let meshGroup = new THREE.Group(); scene.add(meshGroup);
 let pathGroup = new THREE.Group(); scene.add(pathGroup);
+// --- End 3D Scene Setup ---
 
-// UI references
+
+// --- UI Element References ---
 const fileInput = document.getElementById('file');
 const loadBtn = document.getElementById('loadBtn');
-
 const diaInput = document.getElementById('dia');
 const stepoverInput = document.getElementById('stepover');
 const stepdownInput = document.getElementById('stepdown');
 const dirInput = document.getElementById('dir');
-const modeInput = document.getElementById('mode');
 const genPathsBtn = document.getElementById('genPaths');
 const exportBtn = document.getElementById('exportGcode');
 const gcodeArea = document.getElementById('gcode');
 const viewTopBtn = document.getElementById('viewTop');
+const stockAllowInput = document.getElementById('stockAllow');
 
+// New UI element references
 const operationSelect = document.getElementById('operation');
+const strategySelect = document.getElementById('strategy');
+const strategyGroup = document.getElementById('strategyGroup');
 const stepoverGroup = document.getElementById('stepoverGroup');
 const dirGroup = document.getElementById('dirGroup');
 const stockAllowGroup = document.getElementById('stockAllowGroup');
-
-const stockAllowInput = document.getElementById('stockAllow');
 
 let loadedMesh = null;
 let meshBounds = null;
 let lastPaths = [];
 
+// --- File Loading and Parsing (no changes) ---
 loadBtn.addEventListener('click', () => fileInput.click());
 fileInput.addEventListener('change', () => {
   const file = fileInput.files[0];
@@ -333,135 +320,110 @@ fileInput.addEventListener('change', () => {
   }
 });
 
-
-// Show/hide controls depending on mode & operation
-const rasterGroups = [ stepoverGroup, dirGroup ];
-const waterlineGroups = [ stepoverGroup ];
-function updateModeUI() {
-  const mode = modeInput.value;
-  if (mode === 'raster') {
-    rasterGroups.forEach(el => el.style.display = 'block');
-    waterlineGroups.forEach(el => el.style.display = 'none');
-  } else {
-    rasterGroups.forEach(el => el.style.display = 'none');
-    waterlineGroups.forEach(el => el.style.display = 'block');
+function parseSTL(buffer) {
+  clearAll();
+  const loader = new STLLoader();
+  const geom = loader.parse(buffer);
+  geom.computeVertexNormals();
+  const pos = geom.attributes.position;
+  const faces = pos.count / 3;
+  const colors = new Float32Array(pos.count * 3);
+  const A = new THREE.Vector3(), B = new THREE.Vector3(), C = new THREE.Vector3(), N = new THREE.Vector3();
+  for (let i=0; i<faces; i++) {
+    A.fromBufferAttribute(pos, i*3 + 0); B.fromBufferAttribute(pos, i*3 + 1); C.fromBufferAttribute(pos, i*3 + 2);
+    N.copy(new THREE.Vector3().subVectors(C,B).cross(new THREE.Vector3().subVectors(A,B))).normalize();
+    const col = N.z < 0 ? new THREE.Color(0xdc3545) : new THREE.Color(0x0d6efd);
+    for (let v=0; v<3; v++) { colors[(i*3+v)*3+0] = col.r; colors[(i*3+v)*3+1] = col.g; colors[(i*3+v)*3+2] = col.b; }
   }
+  geom.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+  const mat = new THREE.MeshStandardMaterial({ vertexColors:true, side: THREE.DoubleSide, metalness: 0.1, roughness:0.7 });
+  const mesh = new THREE.Mesh(geom, mat);
+  meshGroup.add(mesh);
+  loadedMesh = mesh;
+  meshBounds = new THREE.Box3().setFromObject(mesh);
+  const center = meshBounds.getCenter(new THREE.Vector3());
+  const size = meshBounds.getSize(new THREE.Vector3());
+  setCameraTopView(center, Math.max(size.x, size.y, size.z));
 }
-updateModeUI();
-modeInput.addEventListener('change', updateModeUI);
 
-function updateOperationUI() {
-  const op = operationSelect.value;
-  if (op === 'roughing') {
-    stepoverGroup.style.display = 'block';
+
+// --- New UI Logic ---
+function updateUiVisibility() {
+  const operation = operationSelect.value;
+  const strategy = strategySelect.value;
+
+  // Hide all conditional groups by default
+  strategyGroup.style.display = 'none';
+  stepoverGroup.style.display = 'none';
+  stockAllowGroup.style.display = 'none';
+  dirGroup.style.display = 'none';
+
+  if (operation === 'roughing') {
+    // Show parameters needed for Roughing
     stockAllowGroup.style.display = 'block';
-  } else {
-    stepoverGroup.style.display = 'none';
-    stockAllowGroup.style.display = 'none';
+    stepoverGroup.style.display = 'block';
+  } else if (operation === 'finishing') {
+    // For finishing, first show the strategy choice
+    strategyGroup.style.display = 'block';
+
+    // Then, show parameters based on the chosen strategy
+    if (strategy === 'raster') {
+      stepoverGroup.style.display = 'block';
+      dirGroup.style.display = 'block';
+    }
+    // Waterline finishing doesn't need extra controls, Stepdown is always visible
   }
 }
-updateOperationUI();
-operationSelect.addEventListener('change', updateOperationUI);
+// Add event listeners to update the UI whenever a choice is made
+operationSelect.addEventListener('change', updateUiVisibility);
+strategySelect.addEventListener('change', updateUiVisibility);
+// Call it once on page load to set the initial state
+updateUiVisibility();
 
+
+// --- Main App Logic (animation, camera, etc. - no changes) ---
 window.addEventListener('resize', () => {
   const uiWidth = document.getElementById('ui').offsetWidth;
   const aspect = (window.innerWidth - uiWidth) / window.innerHeight;
-  camera.left = -frustumSize * aspect / 2;
-  camera.right = frustumSize * aspect / 2;
-  camera.top = frustumSize / 2;
-  camera.bottom = -frustumSize / 2;
+  camera.left = -frustumSize * aspect / 2; camera.right = frustumSize * aspect / 2;
+  camera.top = frustumSize / 2; camera.bottom = -frustumSize / 2;
   camera.updateProjectionMatrix();
   resizeRenderer();
 });
-
-function animate() {
-  requestAnimationFrame(animate);
-  controls.update();
-  renderer.render(scene, camera);
-}
+function animate() { requestAnimationFrame(animate); controls.update(); renderer.render(scene, camera); }
 animate();
-
 function setCameraTopView(center, maxSize) {
   const uiWidth = document.getElementById('ui').offsetWidth;
   const aspect = (window.innerWidth - uiWidth) / window.innerHeight;
   const size = Math.max(maxSize, 1) * 1.25;
   frustumSize = size;
-  camera.left = -frustumSize * aspect / 2;
-  camera.right = frustumSize * aspect / 2;
-  camera.top = frustumSize / 2;
-  camera.bottom = -frustumSize / 2;
+  camera.left = -frustumSize * aspect / 2; camera.right = frustumSize * aspect / 2;
+  camera.top = frustumSize / 2; camera.bottom = -frustumSize / 2;
   camera.updateProjectionMatrix();
-
   camera.position.set(center.x, center.y, center.z + maxSize * 2.5);
   camera.up.set(0,0,1);
   camera.lookAt(center);
   controls.target.copy(center);
   controls.update();
 }
-
-function parseSTL(buffer) {
-  clearAll();
-  const loader = new STLLoader();
-  const geom = loader.parse(buffer);
-  geom.computeVertexNormals();
-
-  const pos = geom.attributes.position;
-  const faces = pos.count / 3;
-  const colors = new Float32Array(pos.count * 3);
-  const A = new THREE.Vector3(), B = new THREE.Vector3(), C = new THREE.Vector3(), N = new THREE.Vector3();
-
-  for (let i=0; i<faces; i++) {
-    A.fromBufferAttribute(pos, i*3 + 0);
-    B.fromBufferAttribute(pos, i*3 + 1);
-    C.fromBufferAttribute(pos, i*3 + 2);
-    N.copy(new THREE.Vector3().subVectors(C,B).cross(new THREE.Vector3().subVectors(A,B))).normalize();
-
-    const isOverhang = N.z < 0;
-    const col = isOverhang ? new THREE.Color(0xdc3545) : new THREE.Color(0x0d6efd);
-    for (let v=0; v<3; v++) {
-      colors[(i*3+v)*3+0] = col.r;
-      colors[(i*3+v)*3+1] = col.g;
-      colors[(i*3+v)*3+2] = col.b;
-    }
-  }
-
-  geom.setAttribute('color', new THREE.BufferAttribute(colors, 3));
-  const mat = new THREE.MeshStandardMaterial({ vertexColors:true, side: THREE.DoubleSide, metalness: 0.1, roughness:0.7 });
-  const mesh = new THREE.Mesh(geom, mat);
-  meshGroup.add(mesh);
-
-  loadedMesh = mesh;
-  meshBounds = new THREE.Box3().setFromObject(mesh);
-
-  const center = meshBounds.getCenter(new THREE.Vector3());
-  const size = meshBounds.getSize(new THREE.Vector3());
-  setCameraTopView(center, Math.max(size.x, size.y, size.z));
-}
-
 function clearAll() {
-  meshGroup.clear();
-  pathGroup.clear();
-  loadedMesh = null;
-  lastPaths = [];
-  gcodeArea.value = '';
-  meshBounds = null;
+  meshGroup.clear(); pathGroup.clear(); loadedMesh = null;
+  lastPaths = []; gcodeArea.value = ''; meshBounds = null;
 }
 
-// --- Worker setup ---
+// --- Worker Setup and Communication ---
 const waterlineWorker = new Worker('worker.waterline.js');
 const rasterWorker = new Worker('worker.raster.js');
-
-var lastMsg = {}
+var lastMsg = {};
 
 function handleWorkerMessage(ev, workerName) {
   const msg = ev.data;
-
   if (msg.cmd === 'progress') {
     if (typeof progressModal !== 'undefined' && !progressModal._isShown) showProgressModal(workerName);
     updateProgress(msg.phase, msg.percent, workerName);
   }
   else if (msg.cmd === 'waterlineResult' || msg.cmd === 'roughResult' || msg.cmd === 'rasterResult') {
-    drawLayers(msg)
+    drawLayers(msg);
     lastMsg = msg;
   }
   else if (msg.cmd === 'error') {
@@ -469,79 +431,6 @@ function handleWorkerMessage(ev, workerName) {
     showError(`Worker ${workerName} error: ${msg.message}`);
   }
 }
-
-function drawLayers(msg) {
-  pathGroup.clear();
-  lastPaths = []; // Clear paths for G-code export
-
-  const layers = msg.layers || [];
-  const showOutline = document.getElementById('showOutline').checked;
-  const showVectors = document.getElementById('showVectors').checked;
-  const showToolpath = document.getElementById('showToolpath').checked;
-  const showMask = document.getElementById('showMask').checked;
-  const SCALE = 10000;
-
-  for (const layer of layers) {
-    const z = layer.Z;
-
-    // --- Outline ---
-    if (showOutline && layer.Outline.length) {
-      const outline = layer.Outline[0];
-      const pts = outline.map(pt => new THREE.Vector3(pt.X / SCALE, pt.Y / SCALE, z));
-      const geom = new THREE.BufferGeometry().setFromPoints(pts);
-      const line = new THREE.LineLoop(geom, new THREE.LineBasicMaterial({ color: 0xff0000, transparent: true, opacity: 0.8 }));
-      pathGroup.add(line);
-    }
-
-    // --- Vectors ---
-    if (showVectors) {
-      for (const vector of layer.Vectors) {
-        const pts = vector.map(pt => new THREE.Vector3(pt.X / SCALE, pt.Y / SCALE, z));
-        const geom = new THREE.BufferGeometry().setFromPoints(pts);
-        const line = new THREE.LineLoop(geom, new THREE.LineBasicMaterial({ color: 0x0000ff, transparent: true, opacity: 0.5 }));
-        pathGroup.add(line);
-      }
-    }
-
-    // --- Shadow masks ---
-    if (showMask) {
-      for (const mask of layer.ShowMask) {
-        const pts = mask.map(pt => new THREE.Vector3(pt.X / SCALE, pt.Y / SCALE, z));
-        const geom = new THREE.BufferGeometry().setFromPoints(pts);
-        const line = new THREE.LineLoop(geom, new THREE.LineBasicMaterial({ color: 0xffff00, transparent: true, opacity: 0.3 }));
-        pathGroup.add(line);
-      }
-    }
-
-    // --- Toolpaths ---
-    if (showToolpath && layer.Toolpath) {
-      for (const path of layer.Toolpath) {
-        const pts = [];
-        for (let i = 0; i < path.length; i += 3) {
-          pts.push(new THREE.Vector3(path[i], path[i + 1], path[i + 2]));
-        }
-
-        // Add to lastPaths for G-code export
-        lastPaths.push(pts);
-
-        const geom = new THREE.BufferGeometry().setFromPoints(pts);
-        // Can use THREE.Line because the worker now provides explicitly closed data
-        const line = new THREE.Line(geom, new THREE.LineBasicMaterial({ color: 0x00ff00, transparent: true, opacity: 0.9 }));
-        pathGroup.add(line);
-      }
-    }
-  }
-
-  showCompletion(`Generated ${lastPaths.length} toolpath segments`);
-  setTimeout(() => hideProgressModal(), 500);
-}
-
-
-['showOutline', 'showVectors', 'showToolpath', 'showMask'].forEach(id => {
-  document.getElementById(id).addEventListener('change', () => {
-    if (lastMsg && lastMsg.layers) drawLayers(lastMsg);
-  });
-});
 
 waterlineWorker.onmessage = (ev) => handleWorkerMessage(ev, 'Waterline');
 rasterWorker.onmessage = (ev) => handleWorkerMessage(ev, 'Raster');
@@ -557,25 +446,20 @@ function sendMeshToWorker() {
   return { triangles: arr, triCount, bbox };
 }
 
+// --- Path Generation and G-code Export ---
 genPathsBtn.addEventListener('click', () => {
   if (!loadedMesh) { alert('Load an STL first'); return; }
   pathGroup.clear();
   gcodeArea.value = 'Worker running...';
 
-  const mode = modeInput.value;
-  let dia = parseFloat(diaInput.value);
   const data = sendMeshToWorker();
   if (!data) return;
 
-  const operation = operationSelect.value;
-  const stockAllow = parseFloat(stockAllowInput.value) || 0;
+  // Common parameters
+  const dia = parseFloat(diaInput.value);
   const stepdown = parseFloat(stepdownInput.value);
 
-  if (mode === 'raster') {
-    const stepover = parseFloat(stepoverInput.value);
-    const dir = dirInput.value;
-    rasterWorker.postMessage({
-      cmd: 'raster',
+  const baseParams = {
       triangles: data.triangles,
       triCount: data.triCount,
       bbox: {
@@ -583,44 +467,105 @@ genPathsBtn.addEventListener('click', () => {
         minY: data.bbox.min.y, maxY: data.bbox.max.y,
         minZ: data.bbox.min.z, maxZ: data.bbox.max.z
       },
-      dir, stepover, dia
-    }, [data.triangles.buffer]);
-  } else {
-    let stepover = parseFloat(stepoverInput.value);
-    if(operation === 'roughing') {
-      dia = dia + (stockAllow * 2);
-      if (!stepover || isNaN(stepover)) stepover = dia * 0.6;
-    } else {
-      stepover = undefined;
-    }
+      dia,
+      stepdown
+  };
 
-    const workerMode =
-      operation === 'roughing' ? 'rough' :
-      operation === 'profile'  ? 'profile' :
-      'waterline';
+  const operation = operationSelect.value;
+
+  if (operation === 'roughing') {
+    const stockAllow = parseFloat(stockAllowInput.value) || 0;
+    const effectiveDia = dia + (stockAllow * 2);
+    let stepover = parseFloat(stepoverInput.value);
+    if (!stepover || isNaN(stepover)) stepover = effectiveDia * 0.6;
 
     waterlineWorker.postMessage({
+      ...baseParams,
       cmd: 'waterline',
-      mode: workerMode,
-      triangles: data.triangles,
-      triCount: data.triCount,
-      bbox: {
-        minX: data.bbox.min.x, maxX: data.bbox.max.x,
-        minY: data.bbox.min.y, maxY: data.bbox.max.y,
-        minZ: data.bbox.min.z, maxZ: data.bbox.max.z
-      },
-      dia, stepdown, stepover
-    }, [data.triangles.buffer]);
+      mode: 'rough',
+      stepover
+    }, [baseParams.triangles.buffer]);
+
+  } else if (operation === 'finishing') {
+    const strategy = strategySelect.value;
+
+    if (strategy === 'raster') {
+        const stepover = parseFloat(stepoverInput.value);
+        const dir = dirInput.value;
+        rasterWorker.postMessage({
+            ...baseParams,
+            cmd: 'raster',
+            stepover,
+            dir
+        }, [baseParams.triangles.buffer]);
+    } else { // Waterline finishing
+        waterlineWorker.postMessage({
+            ...baseParams,
+            cmd: 'waterline',
+            mode: 'waterline',
+            stepover: undefined // Not used in waterline finishing
+        }, [baseParams.triangles.buffer]);
+    }
   }
+});
+
+function drawLayers(msg) {
+  pathGroup.clear();
+  lastPaths = [];
+  const layers = msg.layers || [];
+  const showOutline = document.getElementById('showOutline').checked;
+  const showVectors = document.getElementById('showVectors').checked;
+  const showToolpath = document.getElementById('showToolpath').checked;
+  const showMask = document.getElementById('showMask').checked;
+  const SCALE = 10000;
+  for (const layer of layers) {
+    const z = layer.Z;
+    if (showOutline && layer.Outline.length) {
+      const outline = layer.Outline[0];
+      const pts = outline.map(pt => new THREE.Vector3(pt.X / SCALE, pt.Y / SCALE, z));
+      const geom = new THREE.BufferGeometry().setFromPoints(pts);
+      const line = new THREE.LineLoop(geom, new THREE.LineBasicMaterial({ color: 0xff0000, transparent: true, opacity: 0.8 }));
+      pathGroup.add(line);
+    }
+    if (showVectors) {
+      for (const vector of layer.Vectors) {
+        const pts = vector.map(pt => new THREE.Vector3(pt.X / SCALE, pt.Y / SCALE, z));
+        const geom = new THREE.BufferGeometry().setFromPoints(pts);
+        const line = new THREE.LineLoop(geom, new THREE.LineBasicMaterial({ color: 0x0000ff, transparent: true, opacity: 0.5 }));
+        pathGroup.add(line);
+      }
+    }
+    if (showMask) {
+      for (const mask of layer.ShowMask) {
+        const pts = mask.map(pt => new THREE.Vector3(pt.X / SCALE, pt.Y / SCALE, z));
+        const geom = new THREE.BufferGeometry().setFromPoints(pts);
+        const line = new THREE.LineLoop(geom, new THREE.LineBasicMaterial({ color: 0xffff00, transparent: true, opacity: 0.3 }));
+        pathGroup.add(line);
+      }
+    }
+    if (showToolpath && layer.Toolpath) {
+      for (const path of layer.Toolpath) {
+        const pts = [];
+        for (let i = 0; i < path.length; i += 3) { pts.push(new THREE.Vector3(path[i], path[i + 1], path[i + 2])); }
+        lastPaths.push(pts);
+        const geom = new THREE.BufferGeometry().setFromPoints(pts);
+        const line = new THREE.Line(geom, new THREE.LineBasicMaterial({ color: 0x00ff00, transparent: true, opacity: 0.9 }));
+        pathGroup.add(line);
+      }
+    }
+  }
+  showCompletion(`Generated ${lastPaths.length} toolpath segments`);
+  setTimeout(() => hideProgressModal(), 500);
+}
+['showOutline', 'showVectors', 'showToolpath', 'showMask'].forEach(id => {
+  document.getElementById(id).addEventListener('change', () => {
+    if (lastMsg && lastMsg.layers) drawLayers(lastMsg);
+  });
 });
 
 function exportGcode(paths, {feed=800, plunge=200, safeZ=5} = {}) {
   if (!paths || paths.length === 0) return '';
-  const lines = [];
-  lines.push('G21 ; mm');
-  lines.push('G90 ; absolute');
-  lines.push('G94 ; feed per minute');
-  lines.push(`G0 Z${safeZ.toFixed(3)}`);
+  const lines = ['G21 ; mm', 'G90 ; absolute', 'G94 ; feed per minute', `G0 Z${safeZ.toFixed(3)}`];
   for (const seg of paths) {
     if (!seg || seg.length === 0) continue;
     const p0 = seg[0];
@@ -643,12 +588,9 @@ exportBtn.addEventListener('click', () => {
   const blob = new Blob([g], {type:'text/plain'});
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
-  a.href = url;
-  a.download = 'toolpaths.gcode';
-  a.click();
+  a.href = url; a.download = 'toolpaths.gcode'; a.click();
   URL.revokeObjectURL(url);
 });
-
 viewTopBtn.addEventListener('click', () => {
   if (!loadedMesh) return;
   const box = new THREE.Box3().setFromObject(loadedMesh);
@@ -657,7 +599,8 @@ viewTopBtn.addEventListener('click', () => {
   setCameraTopView(center, Math.max(size.x, size.y, size.z));
 });
 
-// Bootstrap modal/toast references
+
+// --- Modals and Toasts (no changes) ---
 const progressModal = new bootstrap.Modal(document.getElementById('progressModal'), {backdrop:'static', keyboard:false});
 const progressBar = document.getElementById('progressBar');
 const progressText = document.getElementById('progressText');
@@ -667,15 +610,12 @@ const errorText = document.getElementById('errorText');
 const completionToastEl = document.getElementById('completionToast');
 const completionToast = new bootstrap.Toast(completionToastEl, {delay: 4000});
 const completionText = document.getElementById('completionText');
-
 function showProgressModal(workerName) {
-  progressBar.style.width = '0%';
-  progressBar.textContent = '';
+  progressBar.style.width = '0%'; progressBar.textContent = '';
   progressText.textContent = `${workerName} - Starting...`;
   progressTitle.textContent = `Processing...`;
   progressModal.show();
 }
-
 function updateProgress(phase, percent, workerName) {
   const phaseDescriptions = { 1: 'Generating layers', 2: 'Generating Overhangs', 3: 'Preparing Toolpaths' };
   const stageTotal = 3;
@@ -683,25 +623,13 @@ function updateProgress(phase, percent, workerName) {
   const end = phase / stageTotal * 100;
   const overallPercent = start + (percent / 100) * (end - start);
   const friendlyName = phaseDescriptions[phase] || phase;
-  progressBar.style.width = `${overallPercent}%`;
-  progressBar.textContent = ``;
+  progressBar.style.width = `${overallPercent}%`; progressBar.textContent = ``;
   progressText.textContent = `${friendlyName}...`;
   progressTitle.textContent = `Processing... ${Math.round(overallPercent)}%`;
 }
-
-function hideProgressModal() {
-  progressModal.hide();
-}
-
-function showError(message) {
-  errorText.textContent = message;
-  errorModal.show();
-}
-
-function showCompletion(message) {
-  completionText.textContent = message;
-  completionToast.show();
-}
+function hideProgressModal() { progressModal.hide(); }
+function showError(message) { errorText.textContent = message; errorModal.show(); }
+function showCompletion(message) { completionText.textContent = message; completionToast.show(); }
 
 </script>
 
